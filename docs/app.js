@@ -1,8 +1,9 @@
 /* Aperture UI. No network calls anywhere in this file, by design. */
-import { analyse, strip } from './exif.js';
+import { analyseImage, stripImage, MIME, detectFormat } from './image.js';
 import { scanText, redactText } from './pii.js';
-import { listEntries, readEntryText } from './zip.js';
-import { auditEntries, fmtBytes, LETTERS } from './audit.js';
+import { listEntries } from './zip.js';
+import { deepScan, plotPoints } from './deepscan.js';
+import { auditEntries, fmtBytes, LETTERS, deadlines } from './audit.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, c =>
@@ -35,13 +36,14 @@ wireDrop('imgdrop', 'imgfile', 'imgpick', async (file) => {
   lastName = file.name;
   const bytes = new Uint8Array(await file.arrayBuffer());
   let a;
-  try { a = analyse(bytes); }
+  try { a = analyseImage(bytes); }
   catch (err) {
     $('imgout').innerHTML = `<div class="result"><p class="verdict bad">Could not read this file</p>
-      <p class="fine">${esc(err.message)}. Aperture reads JPEG; PNG and HEIC are not implemented yet.</p></div>`;
+      <p class="fine">${esc(err.message)}</p></div>`;
     return;
   }
-  const s = strip(bytes);
+  const fmt = detectFormat(bytes);
+  const s = stripImage(bytes);
   lastClean = s.bytes;
 
   const rows = a.findings.map(f => {
@@ -66,7 +68,7 @@ wireDrop('imgdrop', 'imgfile', 'imgpick', async (file) => {
         ${a.findings.length
           ? `${a.findings.length} pieces of hidden information found`
           : 'No embedded metadata found'}</p>
-      <p class="fine">${esc(file.name)} · ${fmtBytes(bytes.length)} ·
+      <p class="fine">${esc(file.name)} · ${String(fmt).toUpperCase()} · ${fmtBytes(bytes.length)} ·
         ${a.metaSegments.length} metadata segment(s), ${fmtBytes(a.metaBytes)}</p>
       ${gps}
       ${rows ? `<table><thead><tr><th></th><th>What</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
@@ -79,9 +81,10 @@ wireDrop('imgdrop', 'imgfile', 'imgpick', async (file) => {
 
   const dl = $('dl');
   if (dl) dl.onclick = () => {
-    const url = URL.createObjectURL(new Blob([lastClean], { type: 'image/jpeg' }));
+    const url = URL.createObjectURL(new Blob([lastClean], { type: MIME[fmt] || 'application/octet-stream' }));
     const a2 = document.createElement('a');
-    a2.href = url; a2.download = lastName.replace(/\.jpe?g$/i, '') + '-cleaned.jpg';
+    const ext = fmt === 'jpeg' ? 'jpg' : fmt;
+    a2.href = url; a2.download = lastName.replace(/\.[^.]+$/, '') + '-cleaned.' + ext;
     a2.click(); URL.revokeObjectURL(url);
   };
 });
@@ -139,6 +142,7 @@ wireDrop('zipdrop', 'zipfile', 'zippick', async (file) => {
   }
   const a = auditEntries(entries);
   const max = Math.max(...a.groups.map(g => g.bytes), 1);
+  const dl = deadlines();
 
   const rows = a.groups.map(g => `<tr>
       <td><span class="sev ${g.severity}">${g.severity}</span></td>
@@ -163,6 +167,10 @@ wireDrop('zipdrop', 'zipfile', 'zippick', async (file) => {
       </div>
       <p class="fine">File dates span ${span}.</p>
       <table><thead><tr><th></th><th>Category</th><th>Files</th><th>Size</th></tr></thead><tbody>${rows}</tbody></table>
+      <button class="btn" id="deep">Open the files and look inside</button>
+      <p class="fine" style="margin-top:8px">So far this only reads filenames. The deep
+        scan decompresses the JSON and extracts what is actually recorded.</p>
+      <div id="deepout"></div>
     </div>
 
     <div class="result">
@@ -170,6 +178,10 @@ wireDrop('zipdrop', 'zipfile', 'zippick', async (file) => {
       <p class="fine">These are drafted from what is actually in your archive. Fill in
         your details, read them before sending, and send them yourself. Aperture never
         contacts a platform on your behalf.</p>
+      <p class="fine"><strong>If you send today:</strong> a GDPR response is due by
+        <span class="mono">${dl.gdpr}</span> (Art. 12(3), one month) and a CCPA response by
+        <span class="mono">${dl.ccpa}</span> (s.1798.130(a)(2), 45 days). If the deadline
+        passes, the Art. 77 letter is the escalation.</p>
       <table style="max-width:560px"><tbody>
         <tr><td style="width:110px">Your name</td><td><input id="lname" value="" placeholder="Full name" style="width:100%;padding:7px;border:1px solid var(--rule);border-radius:4px;font:inherit"></td></tr>
         <tr><td>Your email</td><td><input id="lemail" value="" placeholder="the address on the account" style="width:100%;padding:7px;border:1px solid var(--rule);border-radius:4px;font:inherit"></td></tr>
@@ -178,6 +190,56 @@ wireDrop('zipdrop', 'zipfile', 'zippick', async (file) => {
       <div>${LETTERS.map(L => `<button class="btn ghost" data-l="${L.id}">${esc(L.label)}</button>`).join('')}</div>
       <div id="letterout"></div>
     </div>`;
+
+  $('deep').onclick = async () => {
+    const btn = $('deep'); btn.disabled = true;
+    $('deepout').innerHTML = `<p class="fine" id="dprog">Reading…</p>`;
+    const d = await deepScan(ab, entries, (i, n) => {
+      const el = $('dprog'); if (el) el.textContent = `Reading file ${i} of ${n}…`;
+    });
+    btn.disabled = false;
+
+    const chip = (arr, n = 24) => arr.slice(0, n).map(x =>
+      `<span class="chip">${esc(x)}</span>`).join('') +
+      (arr.length > n ? `<span class="chip more">+${arr.length - n} more</span>` : '');
+
+    $('deepout').innerHTML = `
+      <div class="stats" style="margin-top:16px">
+        <div class="stat"><div class="k">files opened</div><div class="v">${d.filesRead}</div></div>
+        <div class="stat"><div class="k">third parties</div><div class="v ${d.advertisers.length ? 'bad' : ''}">${d.advertisers.length}</div></div>
+        <div class="stat"><div class="k">location points</div><div class="v ${d.points.length ? 'bad' : ''}">${d.points.length.toLocaleString()}</div></div>
+        <div class="stat"><div class="k">identifiers found</div><div class="v ${d.pii.length ? 'bad' : ''}">${d.pii.length}</div></div>
+      </div>
+
+      ${d.points.length ? `<h3>Where you have been</h3>
+        <p class="fine">Every point below is a location this platform recorded and kept.
+        ${d.span ? `Records span ${d.span.days} days.` : ''}</p>
+        ${plotPoints(d.points)}` : ''}
+
+      ${d.advertisers.length ? `<h3>Third parties who uploaded a list with you on it</h3>
+        <p class="fine">These businesses gave the platform a customer list that matched
+        you. You have no relationship with most of them.</p>
+        <div class="chips">${chip(d.advertisers)}</div>` : ''}
+
+      ${d.interests.length ? `<h3>What they have inferred about you</h3>
+        <p class="fine">Inferred attributes are personal data under GDPR Art. 4(1) and
+        CCPA s.1798.140(v)(1)(K). Exports routinely bury them, which is why the letters
+        below demand them by name.</p>
+        <div class="chips">${chip(d.interests, 40)}</div>` : ''}
+
+      ${d.ips.length ? `<h3>Where you logged in from</h3>
+        <table><thead><tr><th>IP address</th><th>Times seen</th></tr></thead><tbody>
+        ${d.ips.slice(0, 8).map(([ip, n]) => `<tr><td class="v">${esc(ip)}</td><td class="num">${n}</td></tr>`).join('')}
+        </tbody></table>` : ''}
+
+      ${d.pii.length ? `<h3>Identifiers sitting in the archive</h3>
+        <table><thead><tr><th></th><th>What</th><th>Value</th></tr></thead><tbody>
+        ${d.pii.slice(0, 12).map(p => `<tr><td><span class="sev ${p.severity}">${p.severity}</span></td>
+          <td>${esc(p.label)}</td><td class="v">${esc(p.value)}</td></tr>`).join('')}
+        </tbody></table>` : ''}
+
+      ${d.parseFailures ? `<p class="fine">${d.parseFailures} file(s) could not be parsed and were skipped.</p>` : ''}`;
+  };
 
   for (const b of document.querySelectorAll('[data-l]')) {
     b.onclick = () => {
@@ -226,6 +288,8 @@ if (location.hash.startsWith('#demo')) {
       $('lname').value = 'Sanjana Injamuri';
       $('lemail').value = 'injamuri.s@northeastern.edu';
       $('lplat').value = 'Meta Platforms Ireland Ltd';
+      $('deep').click();
+      await new Promise(r => setTimeout(r, 1200));
       document.querySelector('[data-l="gdpr17"]').click();
     }
   });

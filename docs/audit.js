@@ -209,8 +209,80 @@ ${name}
 ${email}`;
 }
 
+
+/** GDPR Art. 12(3): one month. CCPA s.1798.130(a)(2): 45 days. */
+export function deadlines(from = new Date()) {
+  const gdpr = new Date(from); gdpr.setMonth(gdpr.getMonth() + 1);
+  const ccpa = new Date(from); ccpa.setDate(ccpa.getDate() + 45);
+  return {
+    gdpr: gdpr.toISOString().slice(0, 10),
+    ccpa: ccpa.toISOString().slice(0, 10),
+  };
+}
+
+/**
+ * Escalation to a supervisory authority under Art. 77. This is the step that
+ * gives an Art. 15 or 17 request teeth: without a credible route to a regulator,
+ * a controller can simply not reply.
+ */
+export function dpaComplaint({ name, email, platform, audit, sentOn }) {
+  const d = sentOn || '[DATE YOU SENT THE ORIGINAL REQUEST]';
+  const due = sentOn ? deadlines(new Date(sentOn)).gdpr : '[ONE MONTH AFTER THAT DATE]';
+  return `Date: ${today()}
+To: [YOUR SUPERVISORY AUTHORITY]
+From: ${name} <${email}>
+Subject: Complaint under Article 77 GDPR concerning ${platform}
+
+Dear Sir or Madam,
+
+I am lodging a complaint under Article 77(1) of the General Data Protection
+Regulation. I consider that the processing of personal data relating to me by
+${platform} infringes the Regulation.
+
+BACKGROUND
+
+On ${d} I submitted a request to ${platform} under [Article 15 / Article 17].
+Under Article 12(3), the controller was required to provide information on action
+taken without undue delay and in any event within one month of receipt, that is by
+${due}.
+
+[Select the applicable ground:]
+  - No response was received within the period required by Article 12(3).
+  - A response was received but was incomplete, in that it omitted the following:
+    [list]
+  - The request was refused without the controller identifying the specific
+    exemption relied upon.
+
+GROUNDS OF COMPLAINT
+
+1. Failure to comply with Article 12(3) as to time limits.
+2. Failure to provide the supplementary information required by Article 15(1)(a)
+   to (h), in particular the recipients under 15(1)(c) and the existence of
+   automated decision-making under 15(1)(h).
+3. Failure to provide inferred and derived personal data. Data inferred about a
+   data subject is personal data within Article 4(1). A data export that omits
+   advertising interest categories and predicted attributes is not a complete
+   response to an Article 15 request.
+
+EVIDENCE
+
+I have retained the data export provided to me by the controller, comprising
+${audit.totalFiles} files totalling ${fmtBytes(audit.totalBytes)}, together with my original request
+and any response received. I can supply these on request.
+
+RELIEF SOUGHT
+
+I ask that the supervisory authority investigate under Article 57(1)(f) and
+exercise its corrective powers under Article 58(2) as it sees fit.
+
+Yours faithfully,
+${name}
+${email}`;
+}
+
 export const LETTERS = [
   { id: 'gdpr15', label: 'GDPR Art. 15 — access',  build: gdprAccess },
   { id: 'gdpr17', label: 'GDPR Art. 17 — erasure', build: gdprErasure },
   { id: 'ccpa',   label: 'CCPA / CPRA requests',   build: ccpaRequest },
+  { id: 'dpa',    label: 'Art. 77 — complaint to a regulator', build: dpaComplaint },
 ];

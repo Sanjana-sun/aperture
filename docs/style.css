@@ -93,3 +93,9 @@ pre.red{background:#16181d;color:#e6e8ec;padding:15px 17px;border-radius:5px;
 
 footer{padding:30px 24px 60px;border-top:1px solid var(--rule);font-size:13.5px;color:var(--ink3);margin-top:20px}
 @media(max-width:620px){h1{font-size:32px}.lede{font-size:17px}header{padding-top:36px}}
+
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin:10px 0 4px}
+.chip{font:11.5px/1 var(--mono);background:#f2f3f5;border:1px solid var(--rule);
+  border-radius:3px;padding:5px 7px;color:var(--ink2)}
+.chip.more{background:none;color:var(--ink3);border-style:dashed}
+.plot{width:100%;height:auto;border:1px solid var(--rule);border-radius:5px;margin:10px 0}
