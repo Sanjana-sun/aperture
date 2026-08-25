@@ -94,11 +94,18 @@ install.
 
 Alongside the ordinary unit tests there is an **adversarial suite** that exists to
 attack the parsers rather than confirm them. It is where most of the real bugs came
-from. It covers truncated and non-ZIP input, corrupt PNG chunk lengths, WebP EXIF
-chunks that already carry the `Exif\0\0` magic, severity inversion in overlapping
-PII matches, overlapping input to the redactor, and a 150,000-point location
-history, which is roughly the size at which `Math.min(...points)` exceeds the
-argument limit and throws.
+from. It covers truncated and non-ZIP input, corrupt PNG chunk lengths, ZIP64
+saturated size fields, encrypted entries, CP437 filenames, VP8X feature bits, WebP
+EXIF chunks that already carry the `Exif\0\0` magic, severity inversion in
+overlapping PII matches, overlapping input to the redactor, and a 150,000-point
+location history, which is roughly the size at which `Math.min(...points)` exceeds
+the argument limit and throws.
+
+Its fixtures are built in memory by `test/helpers.mjs`, which writes ZIP, PNG and
+WebP by hand. That is deliberate: awkward cases like a ZIP64 extra field or a
+CP437 filename can then be produced exactly and explained in code. The assertions
+are behavioural, and each one has been checked by mutating the code it guards to
+confirm it actually fails.
 
 Two properties are worth calling out, because both were bugs first:
 
@@ -168,7 +175,8 @@ python3 test/make-fixtures.py  # regenerate the synthetic export
 Individual suites: `run` (EXIF parse, GPS, strip, byte-identity), `pii`
 (detectors, Luhn rejection, redaction offsets), `audit` (ZIP, categorisation,
 letters), `formats` (JPEG, PNG, WebP round-trip), `deep` (archive scan),
-`adversarial` and `adv2` (malformed and hostile input).
+`adversarial` and `adv2` (malformed and hostile input), `sync` (docs/ drift).
+Fixture builders live in `test/helpers.mjs`.
 
 ---
 
