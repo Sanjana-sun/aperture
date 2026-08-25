@@ -69,6 +69,9 @@ export function scanText(text) {
     d.re.lastIndex = 0;
     let m;
     while ((m = d.re.exec(text)) !== null) {
+      // A zero-width match would leave lastIndex where it is and spin forever.
+      // This has to come before any `continue`, or the guard below it is dead.
+      if (m[0].length === 0) { d.re.lastIndex++; continue; }
       // Some patterns (card, handle) legitimately capture surrounding separators.
       // Trim them and adjust the offsets, or redaction eats the word boundary.
       const raw = m[0];
@@ -83,24 +86,35 @@ export function scanText(text) {
         start: m.index + lead,
         end: m.index + raw.length - trail,
       });
-      if (m[0].length === 0) d.re.lastIndex++;   // guard against zero-width loops
     }
   }
   // Overlapping matches: keep the higher-severity one.
+  //
+  // The comparison has to lead with severity. Sorting by position first meant an
+  // earlier low-severity match claimed the span and suppressed a high-severity
+  // match that started one character later, so a postcode could hide an SSN.
+  // Ties go to the longer, more specific match.
   const rank = { high: 3, medium: 2, low: 1 };
-  findings.sort((a, b) => a.start - b.start || rank[b.severity] - rank[a.severity]);
+  findings.sort((a, b) =>
+    rank[b.severity] - rank[a.severity] ||
+    (b.end - b.start) - (a.end - a.start) ||
+    a.start - b.start);
   const kept = [];
   for (const f of findings) {
     if (kept.some(k => f.start < k.end && f.end > k.start)) continue;
     kept.push(f);
   }
-  return kept;
+  return kept.sort((a, b) => a.start - b.start);
 }
 
 /** Replace findings with a placeholder, preserving the rest of the text. */
 export function redactText(text, findings) {
   let out = '', cursor = 0;
   for (const f of [...findings].sort((a, b) => a.start - b.start)) {
+    // scanText returns non-overlapping findings, but this is exported and callers
+    // may not. Without this guard a overlapping pair rewinds the cursor and the
+    // text between them is dropped from the output entirely.
+    if (f.start < cursor) continue;
     out += text.slice(cursor, f.start) + `[${f.label.toUpperCase()} REMOVED]`;
     cursor = f.end;
   }

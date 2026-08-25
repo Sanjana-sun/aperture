@@ -9,6 +9,27 @@
 import { analyse as analyseJpeg, strip as stripJpeg, parseExif } from './exif.js';
 
 const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const EXIF_MAGIC = [0x45, 0x78, 0x69, 0x66, 0x00, 0x00];
+
+/**
+ * Wrap a raw EXIF payload so the JPEG parser can read it.
+ *
+ * parseExif expects a JPEG APP1 segment: two marker bytes, two length bytes,
+ * "Exif\0\0", then the TIFF block. PNG eXIf chunks hold a bare TIFF block, but
+ * WebP encoders disagree with each other about whether to include the "Exif\0\0"
+ * magic. Prefixing unconditionally double-prefixed the ones that already had it,
+ * so those parsed as nothing and were reported as an unreadable blob.
+ */
+function exifCarrier(b, start, len) {
+  const hasMagic = len >= 6 && EXIF_MAGIC.every((v, i) => b[start + i] === v);
+  const tiffAt = hasMagic ? start + 6 : start;
+  const tiffLen = hasMagic ? len - 6 : len;
+  if (tiffLen <= 0) return null;
+  const carrier = new Uint8Array(4 + 6 + tiffLen);
+  carrier.set(EXIF_MAGIC, 4);
+  carrier.set(b.subarray(tiffAt, tiffAt + tiffLen), 10);
+  return carrier;
+}
 
 export function detectFormat(b) {
   if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8) return 'jpeg';
@@ -22,7 +43,10 @@ export function detectFormat(b) {
 // ---------------------------------------------------------------- PNG
 
 // Chunks that carry metadata rather than pixels.
-const PNG_META = new Set(['tEXt', 'zTXt', 'iTXt', 'eXIf', 'tIME', 'pHYs', 'sPLT']);
+// iCCP is included deliberately: an ICC profile often names the capture device or
+// scanner, and WebP's ICCP was already being stripped. Leaving PNG's in place made
+// the same profile survive in one format and vanish in the other.
+const PNG_META = new Set(['tEXt', 'zTXt', 'iTXt', 'eXIf', 'tIME', 'pHYs', 'sPLT', 'iCCP']);
 
 function pngChunks(b) {
   const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
@@ -31,10 +55,10 @@ function pngChunks(b) {
   while (off + 8 <= b.length) {
     const len = dv.getUint32(off);
     const type = String.fromCharCode(b[off + 4], b[off + 5], b[off + 6], b[off + 7]);
+    if (off + 12 + len > b.length) break;         // malformed; stop before trusting it
     out.push({ type, start: off, length: 12 + len, dataStart: off + 8, dataLen: len });
     if (type === 'IEND') break;
     off += 12 + len;
-    if (len > b.length) break;                    // malformed; stop rather than loop
   }
   return out;
 }
@@ -69,14 +93,8 @@ function analysePng(b) {
       const t = pngText(b, c);
       if (t && t.value) findings.push({ name: `PNG text: ${t.key}`, value: t.value.slice(0, 300) });
     } else if (c.type === 'eXIf') {
-      // eXIf holds a bare TIFF block; reuse the JPEG path by faking a segment header.
-      const fake = { start: c.dataStart - 4 };
-      const wrapped = new Uint8Array(6 + c.dataLen);
-      wrapped.set([0x45, 0x78, 0x69, 0x66, 0, 0]);
-      wrapped.set(b.subarray(c.dataStart, c.dataStart + c.dataLen), 6);
-      const carrier = new Uint8Array(4 + wrapped.length);
-      carrier.set(wrapped, 4);
-      const parsed = parseExif(carrier, { start: 0 });
+      const carrier = exifCarrier(b, c.dataStart, c.dataLen);
+      const parsed = carrier && parseExif(carrier, { start: 0 });
       const tags = parsed ? [...parsed.tiff, ...parsed.exif, ...parsed.gps] : [];
       if (tags.length) { findings.push(...tags); coords = parsed.coords || coords; }
       else findings.push({ name: 'PNG eXIf block (unparsed)', value: `${c.dataLen} bytes` });
@@ -120,9 +138,9 @@ function webpChunks(b) {
     const type = String.fromCharCode(b[off], b[off + 1], b[off + 2], b[off + 3]);
     const len = dv.getUint32(off + 4, true);
     const padded = len + (len % 2);
+    if (off + 8 + padded > b.length) break;       // truncated final chunk
     out.push({ type, start: off, length: 8 + padded, dataStart: off + 8, dataLen: len });
     off += 8 + padded;
-    if (len > b.length) break;
   }
   return out;
 }
@@ -134,10 +152,8 @@ function analyseWebp(b) {
   let coords = null;
   for (const c of meta) {
     if (c.type === 'EXIF') {
-      const wrapped = new Uint8Array(4 + 6 + c.dataLen);
-      wrapped.set([0x45, 0x78, 0x69, 0x66, 0, 0], 4);
-      wrapped.set(b.subarray(c.dataStart, c.dataStart + c.dataLen), 10);
-      const parsed = parseExif(wrapped, { start: 0 });
+      const carrier = exifCarrier(b, c.dataStart, c.dataLen);
+      const parsed = carrier && parseExif(carrier, { start: 0 });
       const tags = parsed ? [...parsed.tiff, ...parsed.exif, ...parsed.gps] : [];
       if (tags.length) { findings.push(...tags); coords = parsed.coords || coords; }
       // Always report the chunk itself. Removing bytes while reporting nothing
@@ -170,6 +186,14 @@ function stripWebp(b) {
   out.set(b.subarray(0, 12));
   let o = 12; for (const a of keep) { out.set(a, o); o += a.length; }
   new DataView(out.buffer).setUint32(4, out.length - 8, true);   // fix RIFF size
+
+  // An extended WebP announces which optional chunks exist in the VP8X feature
+  // byte. Removing the chunks without clearing those bits leaves a file that
+  // claims metadata it no longer carries, which some decoders reject.
+  // Bit layout, MSB first: Rsv Rsv ICC Alpha EXIF XMP Anim Rsv.
+  if (out.length >= 21 && String.fromCharCode(out[12], out[13], out[14], out[15]) === 'VP8X') {
+    out[20] &= ~(0x20 | 0x08 | 0x04);            // ICC, EXIF, XMP
+  }
   return { bytes: out, removedBytes, removed };
 }
 

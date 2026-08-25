@@ -18,25 +18,67 @@ import { scanText } from './pii.js';
 const MAX_BYTES = 12 * 1024 * 1024;   // don't stall the tab on a huge single file
 const MAX_FILES = 400;
 
+const MAX_DEPTH = 64;          // a malformed or hostile export should not blow the stack
+
 /** Recursively pull every string and number out of a parsed JSON value. */
-function* walk(node, path = '') {
-  if (node === null || node === undefined) return;
+function* walk(node, path = '', depth = 0) {
+  if (node === null || node === undefined || depth > MAX_DEPTH) return;
   if (Array.isArray(node)) {
-    for (let i = 0; i < node.length; i++) yield* walk(node[i], `${path}[]`);
+    for (let i = 0; i < node.length; i++) yield* walk(node[i], `${path}[]`, depth + 1);
   } else if (typeof node === 'object') {
-    for (const [k, v] of Object.entries(node)) yield* walk(v, path ? `${path}.${k}` : k);
+    for (const [k, v] of Object.entries(node)) yield* walk(v, path ? `${path}.${k}` : k, depth + 1);
   } else {
     yield { path, value: node };
   }
 }
 
+/** Every plain object in the tree, so coordinate pairs can be read as a unit. */
+function* objects(node, depth = 0) {
+  if (node === null || typeof node !== 'object' || depth > MAX_DEPTH) return;
+  if (Array.isArray(node)) {
+    for (const v of node) yield* objects(v, depth + 1);
+    return;
+  }
+  yield node;
+  for (const v of Object.values(node)) yield* objects(v, depth + 1);
+}
+
+/**
+ * Read a coordinate pair out of one object.
+ *
+ * Both halves must live on the *same* object. An earlier version tracked a
+ * "pending latitude" while walking leaves in document order, which paired a
+ * latitude with whatever longitude came next — across sibling records, and even
+ * across unrelated objects. That invented locations the user had never been to.
+ * For a tool whose entire claim is that it reports only what is actually in the
+ * file, fabricating evidence is the one unacceptable failure.
+ */
+function coordOf(o) {
+  let lat = null, lon = null;
+  for (const [k, v] of Object.entries(o)) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+    // Google Takeout stores integer degrees scaled by 1e7.
+    const e7 = /e7$/i.test(k);
+    const val = e7 ? v / 1e7 : v;
+    if (LAT_KEYS.test(k) && Math.abs(val) <= 90) lat = val;
+    else if (LON_KEYS.test(k) && Math.abs(val) <= 180) lon = val;
+  }
+  return (lat !== null && lon !== null) ? { lat, lon } : null;
+}
+
 // Heuristics for the categories worth surfacing on their own.
 const ADVERTISER_KEYS = /advertis|custom_audience|data_file|business/i;
 const INTEREST_KEYS   = /interest|topic|preference|inferred|category|ad_topic|segment/i;
-const LAT_KEYS        = /^(lat|latitude)$/i;
-const LON_KEYS        = /^(lon|lng|longitude)$/i;
-const IP_KEYS         = /ip|address/i;
+const LAT_KEYS        = /^(lat|latitude)(e7)?$/i;
+const LON_KEYS        = /^(lon|lng|long|longitude)(e7)?$/i;
+const IP_KEYS         = /^(.*_)?(ip|ip_?addr(ess)?|remote_addr|client_ip)$/i;
 const TS_KEYS         = /time|date|ts$|timestamp|created/i;
+
+function isIPv4(s) {
+  const parts = s.split('.');
+  return parts.length === 4 &&
+    parts.every(p => /^\d{1,3}$/.test(p) && +p <= 255 && (p === '0' || !p.startsWith('0')));
+}
 
 function looksLikeEpoch(n) {
   return typeof n === 'number' && n > 946684800 && n < 4102444800;   // 2000..2100
@@ -64,14 +106,20 @@ export async function deepScan(buffer, entries, onProgress) {
     let text;
     try { text = await readEntryText(buffer, e); }
     catch { parseFailures++; continue; }
-    filesRead++; bytesRead += text.length;
+    filesRead++; bytesRead += e.uncompressed || text.length;
 
     let data;
     try { data = JSON.parse(text); }
     catch { parseFailures++; continue; }
 
+    // Coordinates are read per object, not per leaf, so the two halves of a pair
+    // can never come from different records.
+    for (const o of objects(data)) {
+      const c = coordOf(o);
+      if (c) points.push(c);
+    }
+
     // Structured extraction
-    let pendingLat = null;
     for (const { path, value } of walk(data)) {
       const leaf = path.split('.').pop().replace('[]', '');
 
@@ -82,13 +130,8 @@ export async function deepScan(buffer, entries, onProgress) {
           interests.add(value);
         }
       }
-      if (LAT_KEYS.test(leaf) && typeof value === 'number' && Math.abs(value) <= 90) {
-        pendingLat = value;
-      } else if (LON_KEYS.test(leaf) && typeof value === 'number' && Math.abs(value) <= 180) {
-        if (pendingLat !== null) { points.push({ lat: pendingLat, lon: value }); pendingLat = null; }
-      }
       if (IP_KEYS.test(leaf) && typeof value === 'string' &&
-          /^(\d{1,3}\.){3}\d{1,3}$/.test(value)) {
+          isIPv4(value)) {
         ips.set(value, (ips.get(value) || 0) + 1);
       }
       if (TS_KEYS.test(leaf) && looksLikeEpoch(value)) timestamps.push(value * 1000);
@@ -141,9 +184,16 @@ export async function deepScan(buffer, entries, onProgress) {
 /** Render location points as a standalone SVG. No map tiles, so no network call. */
 export function plotPoints(points, width = 560, height = 300) {
   if (!points.length) return '';
-  const lats = points.map(p => p.lat), lons = points.map(p => p.lon);
-  let minLat = Math.min(...lats), maxLat = Math.max(...lats);
-  let minLon = Math.min(...lons), maxLon = Math.max(...lons);
+  // Math.min(...arr) blows the call stack somewhere above ~100k arguments, and a
+  // real location history is routinely larger than that. Fold instead of spread.
+  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+  for (const p of points) {
+    if (p.lat < minLat) minLat = p.lat;
+    if (p.lat > maxLat) maxLat = p.lat;
+    if (p.lon < minLon) minLon = p.lon;
+    if (p.lon > maxLon) maxLon = p.lon;
+  }
+  if (!Number.isFinite(minLat) || !Number.isFinite(minLon)) return '';
   // Pad degenerate extents so a single cluster doesn't divide by zero.
   const padLat = Math.max((maxLat - minLat) * 0.12, 0.002);
   const padLon = Math.max((maxLon - minLon) * 0.12, 0.002);

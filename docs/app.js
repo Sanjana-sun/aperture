@@ -46,8 +46,14 @@ wireDrop('imgdrop', 'imgfile', 'imgpick', async (file) => {
   const s = stripImage(bytes);
   lastClean = s.bytes;
 
+  // GPS latitude and longitude arrive as [degrees, minutes, seconds]. Printing
+  // them through a plain toFixed rendered "40.0000, 45.0000, 28.8800", which reads
+  // like three decimal degrees rather than one angle.
+  const dms = (v) => `${v[0]}\u00b0 ${v[1]}' ${(+v[2]).toFixed(2)}"`;
   const rows = a.findings.map(f => {
-    const v = Array.isArray(f.value) ? f.value.map(x => (+x).toFixed(4)).join(', ') : f.value;
+    const v = !Array.isArray(f.value) ? f.value
+      : (f.value.length === 3 && /latitude|longitude/i.test(f.name)) ? dms(f.value)
+      : f.value.map(x => (+x).toFixed(4)).join(', ');
     const sev = /GPS|serial|owner|unique/i.test(f.name) ? 'high' : 'medium';
     return `<tr><td><span class="sev ${sev}">${sev}</span></td>
       <td>${esc(f.name)}</td><td class="v">${esc(v)}</td></tr>`;
@@ -55,7 +61,7 @@ wireDrop('imgdrop', 'imgfile', 'imgpick', async (file) => {
 
   const gps = a.coords ? `<div class="gps">
       <strong>This photo contains your exact location.</strong><br>
-      <span class="mono">${a.coords.lat.toFixed(6)}, ${a.coords.lon.toFixed(6)}</span> —
+      <span class="mono">${a.coords.lat.toFixed(6)}, ${a.coords.lon.toFixed(6)}</span> ·
       <a href="https://www.openstreetmap.org/?mlat=${a.coords.lat}&mlon=${a.coords.lon}#map=17/${a.coords.lat}/${a.coords.lon}"
          target="_blank" rel="noopener noreferrer">see it on a map</a>
       <p class="fine" style="margin:6px 0 0">Accurate to roughly a building. This is
@@ -75,7 +81,7 @@ wireDrop('imgdrop', 'imgfile', 'imgpick', async (file) => {
       ${s.removedBytes ? `
         <p class="fine">Removing ${esc(s.removed.join(', '))} saves ${fmtBytes(s.removedBytes)}.
         The compressed image data is copied byte for byte, so the picture itself is
-        unchanged — this is not a re-encode.</p>
+        unchanged. This is not a re-encode.</p>
         <button class="btn" id="dl">Download cleaned image</button>` : ''}
     </div>`;
 
@@ -102,7 +108,7 @@ function runText() {
   const f = scanText(text);
   if (!f.length) {
     $('txtout').innerHTML = `<div class="result"><p class="verdict good">Nothing obvious found</p>
-      <p class="fine">No patterns matched. That is not a guarantee — see the limits below.</p></div>`;
+      <p class="fine">No patterns matched. That is not a guarantee. See the limits below.</p></div>`;
     return;
   }
   let html = '', cur = 0;
@@ -153,7 +159,7 @@ wireDrop('zipdrop', 'zipfile', 'zippick', async (file) => {
     </tr>`).join('');
 
   const span = (a.earliest && a.latest)
-    ? `${a.earliest.toISOString().slice(0, 10)} → ${a.latest.toISOString().slice(0, 10)}` : '—';
+    ? `${a.earliest.toISOString().slice(0, 10)} to ${a.latest.toISOString().slice(0, 10)}` : 'none';
 
   $('zipout').innerHTML = `
     <div class="result">

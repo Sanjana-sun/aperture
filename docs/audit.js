@@ -281,8 +281,8 @@ ${email}`;
 }
 
 export const LETTERS = [
-  { id: 'gdpr15', label: 'GDPR Art. 15 — access',  build: gdprAccess },
-  { id: 'gdpr17', label: 'GDPR Art. 17 — erasure', build: gdprErasure },
+  { id: 'gdpr15', label: 'GDPR Art. 15: access',  build: gdprAccess },
+  { id: 'gdpr17', label: 'GDPR Art. 17: erasure', build: gdprErasure },
   { id: 'ccpa',   label: 'CCPA / CPRA requests',   build: ccpaRequest },
-  { id: 'dpa',    label: 'Art. 77 — complaint to a regulator', build: dpaComplaint },
+  { id: 'dpa',    label: 'Art. 77: complaint to a regulator', build: dpaComplaint },
 ];
