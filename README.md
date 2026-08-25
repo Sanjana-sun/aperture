@@ -1,55 +1,81 @@
 # Aperture
 
-**A client-side layer between you and social platforms.**
-[Live demo →](https://sanjana-sun.github.io/aperture/)
+[![tests](https://github.com/Sanjana-sun/aperture/actions/workflows/test.yml/badge.svg)](https://github.com/Sanjana-sun/aperture/actions/workflows/test.yml)
 
-It shows you what your files reveal before you upload them, audits what a platform
-already holds about you, and drafts the legal requests to get it deleted.
+**A client-side layer between you and social platforms.**
+[Live demo](https://sanjana-sun.github.io/aperture/)
+
+It shows you what your files reveal before you upload them, opens the export a
+platform gave you and reads what is actually inside it, and drafts the legal
+requests to get that data deleted.
 
 **Everything runs in the browser.** No server, no upload, no analytics, no network
 request of any kind. Open the network tab and watch it stay empty. **Zero
-dependencies** — every capability below is built on web standards.
+dependencies:** every capability below is built on web standards, including the
+binary parsers.
 
 ---
 
 ## What it does
 
-### Pillar 1 — Control what leaves
+### Pillar 1: control what leaves
 
-- **JPEG metadata analysis.** Parses the JPEG segment structure and walks EXIF /
-  TIFF IFDs directly. Surfaces camera make and model, body serial number, software,
-  timestamps, lens identifiers, and GPS.
-- **GPS resolution.** Converts EXIF rationals to signed decimal degrees and links
-  the coordinates to a map, because that is the finding people react to.
-- **Metadata stripping by segment removal.** Removes APP0–APP15 and COM markers and
-  copies the scan data verbatim, so **the compressed image is byte-identical**.
-  This is deliberately not a canvas re-encode, which would alter every pixel and
-  degrade the image.
+- **Metadata analysis for JPEG, PNG and WebP.** Walks JPEG marker segments and
+  TIFF/EXIF IFDs, PNG `tEXt` / `zTXt` / `iTXt` / `eXIf` / `iCCP` chunks, and WebP
+  RIFF `EXIF` / `XMP` / `ICCP` chunks. Surfaces camera make and model, body serial
+  number, software, timestamps, lens identifiers, ICC profiles and GPS.
+- **GPS resolution.** Converts EXIF rationals to signed decimal degrees, renders
+  the angle as degrees/minutes/seconds, and links the coordinates to a map, because
+  that is the finding people react to.
+- **Stripping by segment removal, not re-encoding.** Drops the metadata segments
+  and copies the image data verbatim, so **the compressed image is byte-identical**
+  and a test asserts it. A canvas re-encode would alter every pixel and visibly
+  degrade the image. Removing a WebP chunk also clears the matching VP8X feature
+  bit, so the file does not advertise metadata it no longer carries.
 - **Text PII detection.** Ten detectors over captions and screenshots: email,
   phone, coordinates, payment cards (**Luhn-validated**, so long digit runs are not
   false-flagged), US SSN, IP, handles, dates of birth, street addresses, postcodes.
-  Overlapping matches resolve by severity. In-place highlighting and redaction.
+  Overlapping matches resolve by severity, so a low-confidence postcode cannot mask
+  an SSN that overlaps it. In-place highlighting and redaction.
 
-### Pillar 2 — See what they already hold
+### Pillar 2: see what they already hold
 
-- **ZIP reader with no library.** Parses the central directory, handles ZIP64, and
-  decompresses through the platform's own `DecompressionStream('deflate-raw')`.
-- **Categorises a data export** into nine sensitivity-ranked categories with sizes,
-  file counts, and an explanation of why each matters.
+- **ZIP reader with no library.** Parses the central directory, reads the ZIP64
+  extended-information extra field so archives and entries over 4 GiB work, decodes
+  CP437 filenames when the UTF-8 flag is absent, reports encrypted entries instead
+  of inflating them into garbage, and decompresses through the platform's own
+  `DecompressionStream('deflate-raw')`.
+- **Shallow audit.** Categorises the export into nine sensitivity-ranked categories
+  with sizes, file counts, date range, and an explanation of why each matters.
+- **Deep scan.** Opens the JSON rather than just listing filenames, and pulls out
+  what people do not know is in there:
+  - every **third-party advertiser** that uploaded a customer list you matched
+  - the **interest and topic categories** inferred about you
+  - **login IP history** with frequency
+  - the **location trace**, rendered as a scatter plot with a bounding box in km.
+    The plot is a dependency-free SVG, so there are no map tiles and therefore no
+    network call.
+
+  Inferred attributes get their own section deliberately. They are personal data
+  under GDPR Art. 4(1) and CCPA s.1798.140(v)(1)(K), they are the most commercially
+  valuable category, and exports routinely bury or omit them.
 - **Drafts data-rights requests**, populated from what is actually in your archive:
-  - **GDPR Article 15** — access, with the full Art. 15(1)(a)–(h) supplementary
-    information, and a specific demand for inferred and derived data that exports
-    routinely omit.
-  - **GDPR Article 17** — erasure, with consent withdrawal under 6(1)(a), objection
+  - **GDPR Article 15:** access, with the full Art. 15(1)(a) to (h) supplementary
+    information and a specific demand for the inferred and derived data above.
+  - **GDPR Article 17:** erasure, with consent withdrawal under 6(1)(a), objection
     under 21(1) and 21(2), Article 19 downstream notification, and a demand that
     any 17(3) exemption be identified specifically rather than asserted generally.
-  - **CCPA / CPRA** — right to know, delete, opt out of sale or sharing, limit
+  - **CCPA / CPRA:** right to know, delete, opt out of sale or sharing, limit
     sensitive personal information, and correct.
+  - **GDPR Article 77:** complaint to a supervisory authority, for when the
+    controller ignores the request. This is the step that gives the others teeth.
+  - **Deadline tracking.** Computes the Art. 12(3) one-month and CCPA 45-day
+    response dates from the day you send.
 
-### Pillar 3 — Private messages
+### Pillar 3: private messages
 
 **Deliberately not built.** Real end-to-end encrypted messaging belongs on a
-reviewed implementation — `libsignal` (X3DH + Double Ratchet) or MLS (RFC 9420) —
+reviewed implementation, `libsignal` (X3DH plus Double Ratchet) or MLS (RFC 9420),
 not on a ratchet written in a hurry. Hand-rolled protocols fail silently, in ways
 only formal analysis catches.
 
@@ -58,6 +84,38 @@ everything before upload. It fails structurally: platforms must render content,
 they re-encode images and destroy anything embedded, and key distribution kills
 adoption before the cryptography matters. **Keybase and Scramble! both died on
 exactly this.** Aperture works on what survives that constraint.
+
+---
+
+## How it is tested
+
+`node test/all.mjs` runs everything. There is no test runner and nothing to
+install.
+
+Alongside the ordinary unit tests there is an **adversarial suite** that exists to
+attack the parsers rather than confirm them. It is where most of the real bugs came
+from. It covers truncated and non-ZIP input, corrupt PNG chunk lengths, WebP EXIF
+chunks that already carry the `Exif\0\0` magic, severity inversion in overlapping
+PII matches, overlapping input to the redactor, and a 150,000-point location
+history, which is roughly the size at which `Math.min(...points)` exceeds the
+argument limit and throws.
+
+Two properties are worth calling out, because both were bugs first:
+
+- **Coordinates are read per object, never across objects.** An earlier version
+  tracked a pending latitude while walking JSON leaves in document order, which
+  paired a latitude with whatever longitude came next, including one from an
+  unrelated record. That invented locations the user had never been to. For a tool
+  whose whole claim is that it reports only what is in the file, fabricating
+  evidence is the one unacceptable failure.
+- **Fixtures are generated, not hand-carved.** `test/make-fixtures.py` is
+  deterministic and checked in, so the binary in the repo is explainable. This
+  matters: `test/meta.webp` was once malformed in a way that made the WebP test
+  pass while only ever exercising the parser's rejection path.
+
+GitHub Pages serves `docs/` only, so the modules are copied there rather than
+imported from `../src`. That copy is the one thing here that can drift with nothing
+failing, so `./sync.sh` performs it and `test/sync.mjs` fails if it was not run.
 
 ---
 
@@ -74,6 +132,21 @@ exactly this.** Aperture works on what survives that constraint.
   logging in for you. That is a deliberate constraint, chosen to stay clear of
   terms-of-service and Computer Fraud and Abuse Act exposure. **You click send.**
 
+### Known limits
+
+- **HEIC is not supported.** It is what iPhones shoot by default, so this is a real
+  gap rather than a rounding error. Reading and stripping HEIC metadata does not
+  require decoding HEVC, since it lives in ISOBMFF boxes, so it is tractable. It is
+  simply not done yet.
+- **Whole files are read into memory.** Archives are loaded with
+  `file.arrayBuffer()`, which is fine for a social export and not fine for a
+  multi-gigabyte Google Takeout. Reading the central directory through
+  `File.slice()` and slicing per entry is the fix.
+- **The deep scan reads JSON only.** Exports that ship HTML are listed and
+  categorised, but not opened.
+- **It has been tested against synthetic exports.** The fixtures model the shape of
+  a real one. They are not a substitute for running it on yours.
+
 ---
 
 ## Run it
@@ -83,14 +156,19 @@ git clone https://github.com/Sanjana-sun/aperture
 cd aperture/docs && python3 -m http.server 8742
 ```
 
-Then open `http://localhost:8742`. Append `#demo` to preload the bundled fixtures.
+Then open `http://localhost:8742`. Append `#demo` to preload the image fixtures, or
+`#demo2` to preload the export archive.
 
-Tests (Node, no runner):
 ```bash
-node test/run.mjs     # EXIF parse, GPS resolution, strip, byte-identity of scan data
-node test/pii.mjs     # detectors, Luhn rejection, redaction offsets
-node test/audit.mjs   # ZIP parse, DecompressionStream, categorisation, letters
+node test/all.mjs            # everything, including the drift check
+./sync.sh                    # copy src/ and fixtures into docs/
+python3 test/make-fixtures.py  # regenerate the synthetic export
 ```
+
+Individual suites: `run` (EXIF parse, GPS, strip, byte-identity), `pii`
+(detectors, Luhn rejection, redaction offsets), `audit` (ZIP, categorisation,
+letters), `formats` (JPEG, PNG, WebP round-trip), `deep` (archive scan),
+`adversarial` and `adv2` (malformed and hostile input).
 
 ---
 

@@ -1,0 +1,42 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # Covers the parsers, the detectors, the letters, the adversarial cases,
+      # and whether docs/ has drifted from src/. No install step: there are no
+      # dependencies to install.
+      - run: node test/all.mjs
+
+  fixtures:
+    name: fixture generator is deterministic
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Compare two runs against each other rather than against the committed
+      # bytes: zlib's deflate output can differ between versions, and a red badge
+      # for that would not mean the generator was non-deterministic.
+      - run: |
+          python3 test/make-fixtures.py
+          cp test/export.zip /tmp/first.zip
+          python3 test/make-fixtures.py
+          cmp /tmp/first.zip test/export.zip
