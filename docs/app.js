@@ -1,0 +1,232 @@
+/* Aperture UI. No network calls anywhere in this file, by design. */
+import { analyse, strip } from './exif.js';
+import { scanText, redactText } from './pii.js';
+import { listEntries, readEntryText } from './zip.js';
+import { auditEntries, fmtBytes, LETTERS } from './audit.js';
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// ---------------------------------------------------------------- tabs
+$('tabs').addEventListener('click', (e) => {
+  const b = e.target.closest('.tab'); if (!b) return;
+  for (const t of $('tabs').children) t.setAttribute('aria-selected', t === b);
+  for (const p of ['p1', 'p2', 'p3']) $(p).hidden = p !== b.dataset.p;
+});
+
+// ---------------------------------------------------------------- drop helper
+function wireDrop(dropId, inputId, pickId, handler) {
+  const drop = $(dropId), input = $(inputId);
+  $(pickId).onclick = () => input.click();
+  input.onchange = () => input.files[0] && handler(input.files[0]);
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault(); drop.classList.remove('over');
+    if (e.dataTransfer.files[0]) handler(e.dataTransfer.files[0]);
+  });
+}
+
+// ================================================================ PILLAR 1: image
+let lastClean = null, lastName = '';
+
+wireDrop('imgdrop', 'imgfile', 'imgpick', async (file) => {
+  lastName = file.name;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let a;
+  try { a = analyse(bytes); }
+  catch (err) {
+    $('imgout').innerHTML = `<div class="result"><p class="verdict bad">Could not read this file</p>
+      <p class="fine">${esc(err.message)}. Aperture reads JPEG; PNG and HEIC are not implemented yet.</p></div>`;
+    return;
+  }
+  const s = strip(bytes);
+  lastClean = s.bytes;
+
+  const rows = a.findings.map(f => {
+    const v = Array.isArray(f.value) ? f.value.map(x => (+x).toFixed(4)).join(', ') : f.value;
+    const sev = /GPS|serial|owner|unique/i.test(f.name) ? 'high' : 'medium';
+    return `<tr><td><span class="sev ${sev}">${sev}</span></td>
+      <td>${esc(f.name)}</td><td class="v">${esc(v)}</td></tr>`;
+  }).join('');
+
+  const gps = a.coords ? `<div class="gps">
+      <strong>This photo contains your exact location.</strong><br>
+      <span class="mono">${a.coords.lat.toFixed(6)}, ${a.coords.lon.toFixed(6)}</span> —
+      <a href="https://www.openstreetmap.org/?mlat=${a.coords.lat}&mlon=${a.coords.lon}#map=17/${a.coords.lat}/${a.coords.lon}"
+         target="_blank" rel="noopener noreferrer">see it on a map</a>
+      <p class="fine" style="margin:6px 0 0">Accurate to roughly a building. This is
+      attached to the file itself, so it travels with the image wherever it is
+      forwarded.</p></div>` : '';
+
+  $('imgout').innerHTML = `
+    <div class="result">
+      <p class="verdict ${a.findings.length ? 'bad' : 'good'}">
+        ${a.findings.length
+          ? `${a.findings.length} pieces of hidden information found`
+          : 'No embedded metadata found'}</p>
+      <p class="fine">${esc(file.name)} · ${fmtBytes(bytes.length)} ·
+        ${a.metaSegments.length} metadata segment(s), ${fmtBytes(a.metaBytes)}</p>
+      ${gps}
+      ${rows ? `<table><thead><tr><th></th><th>What</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
+      ${s.removedBytes ? `
+        <p class="fine">Removing ${esc(s.removed.join(', '))} saves ${fmtBytes(s.removedBytes)}.
+        The compressed image data is copied byte for byte, so the picture itself is
+        unchanged — this is not a re-encode.</p>
+        <button class="btn" id="dl">Download cleaned image</button>` : ''}
+    </div>`;
+
+  const dl = $('dl');
+  if (dl) dl.onclick = () => {
+    const url = URL.createObjectURL(new Blob([lastClean], { type: 'image/jpeg' }));
+    const a2 = document.createElement('a');
+    a2.href = url; a2.download = lastName.replace(/\.jpe?g$/i, '') + '-cleaned.jpg';
+    a2.click(); URL.revokeObjectURL(url);
+  };
+});
+
+// ================================================================ PILLAR 1: text
+let txtTimer = null;
+$('txt').addEventListener('input', () => {
+  clearTimeout(txtTimer);
+  txtTimer = setTimeout(runText, 120);
+});
+
+function runText() {
+  const text = $('txt').value;
+  if (!text.trim()) { $('txtout').innerHTML = ''; return; }
+  const f = scanText(text);
+  if (!f.length) {
+    $('txtout').innerHTML = `<div class="result"><p class="verdict good">Nothing obvious found</p>
+      <p class="fine">No patterns matched. That is not a guarantee — see the limits below.</p></div>`;
+    return;
+  }
+  let html = '', cur = 0;
+  for (const x of [...f].sort((a, b) => a.start - b.start)) {
+    html += esc(text.slice(cur, x.start)) + `<mark title="${esc(x.label)}">${esc(x.value)}</mark>`;
+    cur = x.end;
+  }
+  html += esc(text.slice(cur));
+
+  const rows = f.map(x => `<tr><td><span class="sev ${x.severity}">${x.severity}</span></td>
+    <td>${esc(x.label)}</td><td class="v">${esc(x.value)}</td></tr>`).join('');
+
+  $('txtout').innerHTML = `
+    <div class="result">
+      <p class="verdict bad">${f.length} thing${f.length > 1 ? 's' : ''} you may not want to post</p>
+      <pre class="red" style="background:#fff;color:var(--ink);border:1px solid var(--rule)">${html}</pre>
+      <table><thead><tr><th></th><th>What</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table>
+      <button class="btn" id="redact">Show redacted version</button>
+      <div id="redout"></div>
+    </div>`;
+  $('redact').onclick = () => {
+    $('redout').innerHTML = `<pre class="red">${esc(redactText(text, f))}</pre>`;
+  };
+}
+
+// ================================================================ PILLAR 2: archive
+wireDrop('zipdrop', 'zipfile', 'zippick', async (file) => {
+  $('zipout').innerHTML = `<div class="result"><p class="fine">Reading ${esc(file.name)} (${fmtBytes(file.size)})…</p></div>`;
+  let entries, ab;
+  try {
+    ab = await file.arrayBuffer();
+    entries = listEntries(ab);
+  } catch (err) {
+    $('zipout').innerHTML = `<div class="result"><p class="verdict bad">Could not read this archive</p>
+      <p class="fine">${esc(err.message)}</p></div>`;
+    return;
+  }
+  const a = auditEntries(entries);
+  const max = Math.max(...a.groups.map(g => g.bytes), 1);
+
+  const rows = a.groups.map(g => `<tr>
+      <td><span class="sev ${g.severity}">${g.severity}</span></td>
+      <td><strong>${esc(g.label)}</strong><br><span class="fine">${esc(g.why)}</span></td>
+      <td class="num">${g.files.length}</td>
+      <td class="num">${fmtBytes(g.bytes)}<div class="bar"><span class="${g.severity}"
+        style="width:${Math.max(3, 100 * g.bytes / max)}%"></span></div></td>
+    </tr>`).join('');
+
+  const span = (a.earliest && a.latest)
+    ? `${a.earliest.toISOString().slice(0, 10)} → ${a.latest.toISOString().slice(0, 10)}` : '—';
+
+  $('zipout').innerHTML = `
+    <div class="result">
+      <p class="verdict ${a.highCount ? 'bad' : 'good'}">
+        ${a.highCount} high-sensitivity categor${a.highCount === 1 ? 'y' : 'ies'} in this export</p>
+      <div class="stats">
+        <div class="stat"><div class="k">files</div><div class="v">${a.totalFiles}</div></div>
+        <div class="stat"><div class="k">uncompressed</div><div class="v">${fmtBytes(a.totalBytes)}</div></div>
+        <div class="stat"><div class="k">categories</div><div class="v">${a.groups.length}</div></div>
+        <div class="stat"><div class="k">high sensitivity</div><div class="v ${a.highCount ? 'bad' : ''}">${a.highCount}</div></div>
+      </div>
+      <p class="fine">File dates span ${span}.</p>
+      <table><thead><tr><th></th><th>Category</th><th>Files</th><th>Size</th></tr></thead><tbody>${rows}</tbody></table>
+    </div>
+
+    <div class="result">
+      <p class="verdict">Ask for it back</p>
+      <p class="fine">These are drafted from what is actually in your archive. Fill in
+        your details, read them before sending, and send them yourself. Aperture never
+        contacts a platform on your behalf.</p>
+      <table style="max-width:560px"><tbody>
+        <tr><td style="width:110px">Your name</td><td><input id="lname" value="" placeholder="Full name" style="width:100%;padding:7px;border:1px solid var(--rule);border-radius:4px;font:inherit"></td></tr>
+        <tr><td>Your email</td><td><input id="lemail" value="" placeholder="the address on the account" style="width:100%;padding:7px;border:1px solid var(--rule);border-radius:4px;font:inherit"></td></tr>
+        <tr><td>Platform</td><td><input id="lplat" value="" placeholder="e.g. Meta Platforms Ireland Ltd" style="width:100%;padding:7px;border:1px solid var(--rule);border-radius:4px;font:inherit"></td></tr>
+      </tbody></table>
+      <div>${LETTERS.map(L => `<button class="btn ghost" data-l="${L.id}">${esc(L.label)}</button>`).join('')}</div>
+      <div id="letterout"></div>
+    </div>`;
+
+  for (const b of document.querySelectorAll('[data-l]')) {
+    b.onclick = () => {
+      const L = LETTERS.find(x => x.id === b.dataset.l);
+      const body = L.build({
+        name: $('lname').value || '[YOUR NAME]',
+        email: $('lemail').value || '[YOUR EMAIL]',
+        platform: $('lplat').value || '[PLATFORM]',
+        audit: a,
+      });
+      $('letterout').innerHTML = `<pre class="red">${esc(body)}</pre>
+        <button class="btn" id="copy">Copy to clipboard</button>
+        <button class="btn ghost" id="save">Download as .txt</button>`;
+      $('copy').onclick = async () => {
+        await navigator.clipboard.writeText(body);
+        $('copy').textContent = 'Copied';
+        setTimeout(() => ($('copy').textContent = 'Copy to clipboard'), 1600);
+      };
+      $('save').onclick = () => {
+        const url = URL.createObjectURL(new Blob([body], { type: 'text/plain' }));
+        const el = document.createElement('a');
+        el.href = url; el.download = `${L.id}-request.txt`; el.click();
+        URL.revokeObjectURL(url);
+      };
+    };
+  }
+});
+
+// A #demo hash preloads the bundled fixtures so the page can be screenshotted or
+// shared in a fully populated state. It touches only local files.
+if (location.hash.startsWith('#demo')) {
+  window.addEventListener('load', async () => {
+    const jb = await (await fetch('./with-gps.jpg')).blob();
+    const dt = new DataTransfer();
+    dt.items.add(new File([jb], 'holiday-photo.jpg', { type: 'image/jpeg' }));
+    const inp = $('imgfile'); inp.files = dt.files; inp.dispatchEvent(new Event('change'));
+    $('txt').value = "New apartment! 1600 Pennsylvania Avenue, DC 20500. Reach me at sanjana.test@example.com or (774) 465-9562. Shot at 40.758024, -73.985542.";
+    $('txt').dispatchEvent(new Event('input'));
+    const zb = await (await fetch('./export.zip')).blob();
+    const dt2 = new DataTransfer();
+    dt2.items.add(new File([zb], 'instagram-export.zip', { type: 'application/zip' }));
+    const zi = $('zipfile'); zi.files = dt2.files; zi.dispatchEvent(new Event('change'));
+    if (location.hash === '#demo2') {
+      await new Promise(r => setTimeout(r, 400));
+      document.querySelector('[data-p="p2"]').click();
+      $('lname').value = 'Sanjana Injamuri';
+      $('lemail').value = 'injamuri.s@northeastern.edu';
+      $('lplat').value = 'Meta Platforms Ireland Ltd';
+      document.querySelector('[data-l="gdpr17"]').click();
+    }
+  });
+}

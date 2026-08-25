@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aperture — see what leaves your device</title>
+<meta name="description" content="A client-side layer between you and social platforms. Strips metadata before upload, audits what platforms already hold, and drafts your GDPR and CCPA requests. Everything runs in your browser.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="wrap">
+  <p class="eyebrow">Prototype · runs entirely in your browser</p>
+  <h1>Aperture</h1>
+  <p class="lede">
+    A layer between you and the platforms. It shows you what your files reveal
+    before you upload them, audits what a platform already holds about you, and
+    drafts the legal requests to get it deleted.
+  </p>
+  <div class="callout">
+    <strong>Nothing leaves this device.</strong> There is no server, no upload, no
+    analytics, and no network request of any kind. Open your browser's network tab
+    and watch: it stays empty while you use this. Load the page once and it works
+    offline. <span class="mono">0 dependencies.</span>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button class="tab" data-p="p1" aria-selected="true">1 · Before you upload</button>
+    <button class="tab" data-p="p2" aria-selected="false">2 · What they already have</button>
+    <button class="tab" data-p="p3" aria-selected="false">3 · Private messages</button>
+  </nav>
+</header>
+
+<main class="wrap">
+
+<!-- ============================================= PILLAR 1 -->
+<section id="p1" class="panel">
+  <h2>Control what leaves</h2>
+  <p>Photographs carry more than the picture. Drop one in and see what a platform
+    would receive along with it.</p>
+
+  <div class="drop" id="imgdrop">
+    <input type="file" id="imgfile" accept="image/jpeg" hidden>
+    <p><strong>Drop a JPEG here</strong> or <button class="link" id="imgpick">choose a file</button></p>
+    <p class="fine">Photos straight from a phone carry the most. Nothing is uploaded.</p>
+  </div>
+  <div id="imgout"></div>
+
+  <h3>Captions and screenshots</h3>
+  <p>Text leaks too, often more directly than images. Paste a caption or a message
+     you were about to post.</p>
+  <textarea id="txt" rows="5" spellcheck="false" placeholder="Paste a caption here. Try including an email, a phone number, or coordinates."></textarea>
+  <div id="txtout"></div>
+</section>
+
+<!-- ============================================= PILLAR 2 -->
+<section id="p2" class="panel" hidden>
+  <h2>See what they already hold, and ask for it back</h2>
+  <p>
+    Every major platform will give you an archive of your data if you ask. Almost
+    nobody reads it, because it arrives as thousands of files. Drop that archive
+    here and it is categorised locally.
+  </p>
+  <p class="fine">
+    Get yours from: Instagram &amp; Facebook → Settings → Accounts Centre → Your
+    information and permissions → Download your information. Google → takeout.google.com.
+    X → Settings → Your account → Download an archive.
+  </p>
+
+  <div class="drop" id="zipdrop">
+    <input type="file" id="zipfile" accept=".zip" hidden>
+    <p><strong>Drop a data export .zip here</strong> or <button class="link" id="zippick">choose a file</button></p>
+    <p class="fine">Read in memory using the browser's own decompression. Never uploaded.</p>
+  </div>
+  <div id="zipout"></div>
+</section>
+
+<!-- ============================================= PILLAR 3 -->
+<section id="p3" class="panel" hidden>
+  <h2>Private messages</h2>
+  <div class="notbuilt">
+    <p><strong>Deliberately not built yet.</strong></p>
+    <p>
+      The third pillar is real end-to-end encrypted messaging between people who
+      both install this. It is not here, and shipping it quickly would be the wrong
+      call.
+    </p>
+    <p>
+      Hand-rolled cryptographic protocols fail in ways that only formal analysis
+      catches, and the failures are silent. The plan is to use a reviewed
+      implementation — <span class="mono">libsignal</span> (X3DH plus Double
+      Ratchet) or <span class="mono">MLS</span> (RFC 9420) — rather than to write a
+      ratchet from scratch.
+    </p>
+    <p>
+      The same reasoning rules out the approach people usually suggest first:
+      encrypt everything before upload. It fails structurally, not incidentally.
+      Platforms have to render content, they re-encode images and destroy anything
+      embedded in them, and key distribution kills adoption before the crypto ever
+      matters. <strong>Keybase and Scramble! both died on exactly this.</strong>
+      So Aperture works on what survives that constraint instead of fighting it.
+    </p>
+  </div>
+</section>
+
+<section class="panel-static">
+  <h2>What this does not claim</h2>
+  <ul class="honest">
+    <li><strong>Pattern matching is not certification.</strong> The text scanner
+      finds things that <em>look like</em> identifiers. It will miss things, and it
+      will flag things that are harmless. It reduces accidental disclosure; it does
+      not make a caption safe.</li>
+    <li><strong>Metadata removal is not anonymity.</strong> Stripping EXIF removes
+      what is attached to the file. The image content still shows where you were,
+      and the platform still sees your account, your IP and your upload time.</li>
+    <li><strong>Adversarial perturbation is not implemented here</strong>, and when
+      it is, it will raise an attacker's cost rather than guarantee protection.
+      Platform recompression degrades it, and published defences get broken by
+      later models.</li>
+    <li><strong>Deletion requests are not deletion.</strong> This drafts the
+      letters. Whether a company complies, and what exemptions it claims, is
+      outside anything software can control.</li>
+    <li><strong>This never automates anything on a platform.</strong> No posting,
+      no scraping, no logging in on your behalf. That is a deliberate design
+      constraint, chosen to stay on the right side of terms-of-service and
+      Computer&nbsp;Fraud&nbsp;and&nbsp;Abuse&nbsp;Act exposure. You click send, always.</li>
+  </ul>
+</section>
+
+</main>
+
+<footer class="wrap">
+  <p>Sanjana Sri Injamuri · MS Computer Science, Northeastern University ·
+     <a href="mailto:injamuri.s@northeastern.edu">injamuri.s@northeastern.edu</a></p>
+  <p class="fine">Prototype. Two of three pillars implemented. No warranty, and not legal advice.</p>
+</footer>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
