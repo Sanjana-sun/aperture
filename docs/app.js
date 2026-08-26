@@ -79,9 +79,14 @@ wireDrop('imgdrop', 'imgfile', 'imgpick', async (file) => {
       ${gps}
       ${rows ? `<table><thead><tr><th></th><th>What</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
       ${s.removedBytes ? `
-        <p class="fine">Removing ${esc(s.removed.join(', '))} saves ${fmtBytes(s.removedBytes)}.
-        The compressed image data is copied byte for byte, so the picture itself is
-        unchanged. This is not a re-encode.</p>
+        <p class="fine">${s.inPlace
+          ? `Overwrote ${esc(s.removed.join(', '))}, ${fmtBytes(s.removedBytes)} of metadata.
+             This container stores absolute file offsets, so the bytes are blanked where
+             they lie rather than removed, and the file stays the same size. The encoded
+             picture is untouched.`
+          : `Removing ${esc(s.removed.join(', '))} saves ${fmtBytes(s.removedBytes)}.
+             The compressed image data is copied byte for byte, so the picture itself is
+             unchanged. This is not a re-encode.`}</p>
         <button class="btn" id="dl">Download cleaned image</button>` : ''}
     </div>`;
 

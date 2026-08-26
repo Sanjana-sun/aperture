@@ -6,30 +6,10 @@
  * copy the image data verbatim.
  */
 
-import { analyse as analyseJpeg, strip as stripJpeg, parseExif } from './exif.js';
+import { analyse as analyseJpeg, strip as stripJpeg, parseExif, exifCarrier } from './exif.js';
+import { detectIsobmff, analyseHeic, stripHeic } from './heic.js';
 
 const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-const EXIF_MAGIC = [0x45, 0x78, 0x69, 0x66, 0x00, 0x00];
-
-/**
- * Wrap a raw EXIF payload so the JPEG parser can read it.
- *
- * parseExif expects a JPEG APP1 segment: two marker bytes, two length bytes,
- * "Exif\0\0", then the TIFF block. PNG eXIf chunks hold a bare TIFF block, but
- * WebP encoders disagree with each other about whether to include the "Exif\0\0"
- * magic. Prefixing unconditionally double-prefixed the ones that already had it,
- * so those parsed as nothing and were reported as an unreadable blob.
- */
-function exifCarrier(b, start, len) {
-  const hasMagic = len >= 6 && EXIF_MAGIC.every((v, i) => b[start + i] === v);
-  const tiffAt = hasMagic ? start + 6 : start;
-  const tiffLen = hasMagic ? len - 6 : len;
-  if (tiffLen <= 0) return null;
-  const carrier = new Uint8Array(4 + 6 + tiffLen);
-  carrier.set(EXIF_MAGIC, 4);
-  carrier.set(b.subarray(tiffAt, tiffAt + tiffLen), 10);
-  return carrier;
-}
 
 export function detectFormat(b) {
   if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8) return 'jpeg';
@@ -37,9 +17,8 @@ export function detectFormat(b) {
   if (b.length > 12 &&
       b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
       b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return 'webp';
-  return null;
+  return detectIsobmff(b);
 }
-
 // ---------------------------------------------------------------- PNG
 
 // Chunks that carry metadata rather than pixels.
@@ -204,7 +183,8 @@ export function analyseImage(b) {
   if (f === 'jpeg') return { format: 'jpeg', ...analyseJpeg(b) };
   if (f === 'png') return analysePng(b);
   if (f === 'webp') return analyseWebp(b);
-  throw new Error('Unsupported format. Aperture reads JPEG, PNG and WebP. HEIC is not implemented.');
+  if (f === 'heic' || f === 'avif') return analyseHeic(b, f);
+  throw new Error('Unsupported format. Aperture reads JPEG, PNG, WebP, HEIC and AVIF.');
 }
 
 export function stripImage(b) {
@@ -212,7 +192,9 @@ export function stripImage(b) {
   if (f === 'jpeg') return stripJpeg(b);
   if (f === 'png') return stripPng(b);
   if (f === 'webp') return stripWebp(b);
+  if (f === 'heic' || f === 'avif') return stripHeic(b);
   throw new Error('Unsupported format');
 }
 
-export const MIME = { jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+export const MIME = { jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp',
+                      heic: 'image/heic', avif: 'image/avif' };

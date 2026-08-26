@@ -1,6 +1,6 @@
 /* Runs every test file and reports a single pass/fail. */
 import { execFileSync } from 'node:child_process';
-const files = ['sync', 'run', 'pii', 'audit', 'formats', 'deep', 'adversarial', 'adv2'];
+const files = ['sync', 'run', 'pii', 'audit', 'formats', 'deep', 'adversarial', 'adv2', 'adv3'];
 let failed = [];
 for (const f of files) {
   let out = '';

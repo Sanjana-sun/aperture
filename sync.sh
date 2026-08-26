@@ -5,5 +5,5 @@
 set -e
 cd "$(dirname "$0")"
 for f in src/*.js; do cp "$f" "docs/$(basename "$f")"; done
-cp test/export.zip test/meta.png test/meta.webp docs/ 2>/dev/null || true
+cp test/export.zip test/meta.png test/meta.webp test/iphone.heic docs/ 2>/dev/null || true
 echo "synced src/ and fixtures into docs/"

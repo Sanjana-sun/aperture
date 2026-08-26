@@ -22,18 +22,31 @@ standards, including the binary parsers.
 
 ### Pillar 1: control what leaves
 
-- **Metadata analysis for JPEG, PNG and WebP.** Walks JPEG marker segments and
-  TIFF/EXIF IFDs, PNG `tEXt` / `zTXt` / `iTXt` / `eXIf` / `iCCP` chunks, and WebP
-  RIFF `EXIF` / `XMP` / `ICCP` chunks. Surfaces camera make and model, body serial
-  number, software, timestamps, lens identifiers, ICC profiles and GPS.
+- **Metadata analysis for JPEG, PNG, WebP, HEIC and AVIF.** Walks JPEG marker
+  segments and TIFF/EXIF IFDs, PNG `tEXt` / `zTXt` / `iTXt` / `eXIf` / `iCCP`
+  chunks, WebP RIFF `EXIF` / `XMP` / `ICCP` chunks, and HEIF `meta` / `iinf` /
+  `iloc` item tables. Surfaces camera make and model, body serial number, software,
+  timestamps, lens identifiers, ICC profiles and GPS.
+- **HEIC, which is what an iPhone actually shoots.** A HEIC is ISOBMFF, the same box
+  container as MP4: the picture is one item, EXIF is another, and an `iloc` table
+  says where each item's bytes sit. So the metadata is readable by walking boxes and
+  following an offset, and **the HEVC bitstream is never decoded or touched**. AVIF
+  uses the identical container, so it works too.
 - **GPS resolution.** Converts EXIF rationals to signed decimal degrees, renders
   the angle as degrees/minutes/seconds, and links the coordinates to a map, because
   that is the finding people react to.
-- **Stripping by segment removal, not re-encoding.** Drops the metadata segments
+- **Stripping by segment removal, not re-encoding.** For JPEG, PNG and WebP, drops
+  the metadata segments
   and copies the image data verbatim, so **the compressed image is byte-identical**
   and a test asserts it. A canvas re-encode would alter every pixel and visibly
   degrade the image. Removing a WebP chunk also clears the matching VP8X feature
   bit, so the file does not advertise metadata it no longer carries.
+  **HEIC is scrubbed in place instead**, and deliberately: `iloc` stores absolute
+  file offsets, and in a real iPhone file the image item sits *after* the EXIF item,
+  so deleting bytes would shift the picture and invalidate every offset in the
+  table. Overwriting the payload where it lies removes the same information with
+  none of that risk. The file keeps its length, the boxes stay valid, and the
+  encoded image is byte-identical.
 - **Text PII detection.** Ten detectors over captions and screenshots: email,
   phone, coordinates, payment cards (**Luhn-validated**, so long digit runs are not
   false-flagged), US SSN, IP, handles, dates of birth, street addresses, postcodes.
@@ -98,7 +111,9 @@ Alongside the ordinary unit tests there is an **adversarial suite** that exists 
 attack the parsers rather than confirm them. It is where most of the real bugs came
 from. It covers truncated and non-ZIP input, corrupt PNG chunk lengths, ZIP64
 saturated size fields, encrypted entries, CP437 filenames, VP8X feature bits, WebP
-EXIF chunks that already carry the `Exif\0\0` magic, severity inversion in
+EXIF chunks that already carry the `Exif\0\0` magic, HEIF `iloc` versions 0 to 2,
+`construction_method` 1, extents declared past the end of the file, severity
+inversion in
 overlapping PII matches, overlapping input to the redactor, and a 150,000-point
 location history, which is roughly the size at which `Math.min(...points)` exceeds
 the argument limit and throws.
@@ -143,10 +158,12 @@ failing, so `./sync.sh` performs it and `test/sync.mjs` fails if it was not run.
 
 ### Known limits
 
-- **HEIC is not supported.** It is what iPhones shoot by default, so this is a real
-  gap rather than a rounding error. Reading and stripping HEIC metadata does not
-  require decoding HEVC, since it lives in ISOBMFF boxes, so it is tractable. It is
-  simply not done yet.
+- **HEIC video and multi-image files are out of scope.** Still images and image
+  sequences are read; burst containers and depth or auxiliary items are listed but
+  not individually scrubbed.
+- **HEIF items stored via `construction_method` 1** (bytes inside an `idat` box
+  rather than at a file offset) are reported but not scrubbed. Aperture says so
+  rather than guessing at an offset.
 - **Whole files are read into memory.** Archives are loaded with
   `file.arrayBuffer()`, which is fine for a social export and not fine for a
   multi-gigabyte Google Takeout. Reading the central directory through
@@ -177,7 +194,8 @@ python3 test/make-fixtures.py  # regenerate the synthetic export
 Individual suites: `run` (EXIF parse, GPS, strip, byte-identity), `pii`
 (detectors, Luhn rejection, redaction offsets), `audit` (ZIP, categorisation,
 letters), `formats` (JPEG, PNG, WebP round-trip), `deep` (archive scan),
-`adversarial` and `adv2` (malformed and hostile input), `sync` (docs/ drift).
+`adversarial`, `adv2` and `adv3` (malformed and hostile input, the last covering
+HEIF containers), `sync` (docs/ drift).
 Fixture builders live in `test/helpers.mjs`.
 
 ---
