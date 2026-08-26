@@ -9,10 +9,12 @@ It shows you what your files reveal before you upload them, opens the export a
 platform gave you and reads what is actually inside it, and drafts the legal
 requests to get that data deleted.
 
-**Everything runs in the browser.** No server, no upload, no analytics, no network
-request of any kind. Open the network tab and watch it stay empty. **Zero
-dependencies:** every capability below is built on web standards, including the
-binary parsers.
+**Everything runs in the browser.** No server, no upload, no analytics, and no
+request that carries your data anywhere. Open your browser's network tab, drop a
+photo in, and watch it stay still. (The page fetches its own stylesheet and modules
+like any web page, and the `#demo` links load two bundled sample files. Nothing you
+choose is ever sent.) **Zero dependencies:** every capability below is built on web
+standards, including the binary parsers.
 
 ---
 
