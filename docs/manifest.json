@@ -1,0 +1,14 @@
+{
+  "name": "Aperture",
+  "short_name": "Aperture",
+  "description": "See what leaves your device. Strips file metadata and audits platform data exports, entirely in your browser.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fbfbfc",
+  "theme_color": "#b3341f",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

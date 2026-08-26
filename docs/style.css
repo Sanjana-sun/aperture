@@ -99,3 +99,13 @@ footer{padding:30px 24px 60px;border-top:1px solid var(--rule);font-size:13.5px;
   border-radius:3px;padding:5px 7px;color:var(--ink2)}
 .chip.more{background:none;color:var(--ink3);border-style:dashed}
 .plot{width:100%;height:auto;border:1px solid var(--rule);border-radius:5px;margin:10px 0}
+
+.notice {
+  border-left: 3px solid #b3341f;
+  background: #fdf6f4;
+  padding: 10px 14px;
+  margin: 14px 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #3d4147;
+}

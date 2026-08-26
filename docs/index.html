@@ -6,6 +6,9 @@
 <title>Aperture: see what leaves your device</title>
 <meta name="description" content="A client-side layer between you and social platforms. Strips metadata before upload, audits what platforms already hold, and drafts your GDPR and CCPA requests. Everything runs in your browser.">
 <link rel="stylesheet" href="style.css">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<meta name="theme-color" content="#b3341f">
 </head>
 <body>
 
@@ -137,5 +140,11 @@
 </footer>
 
 <script type="module" src="app.js"></script>
+<script>
+  // Precaches the app's own files so the offline claim above is literally true.
+  if ('serviceWorker' in navigator) {
+    addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+</script>
 </body>
 </html>

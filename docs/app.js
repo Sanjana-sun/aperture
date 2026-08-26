@@ -198,6 +198,12 @@ wireDrop('zipdrop', 'zipfile', 'zippick', async (file) => {
         <tr><td>Your email</td><td><input id="lemail" value="" placeholder="the address on the account" style="width:100%;padding:7px;border:1px solid var(--rule);border-radius:4px;font:inherit"></td></tr>
         <tr><td>Platform</td><td><input id="lplat" value="" placeholder="e.g. Meta Platforms Ireland Ltd" style="width:100%;padding:7px;border:1px solid var(--rule);border-radius:4px;font:inherit"></td></tr>
       </tbody></table>
+      <p class="notice"><strong>These are drafts, not legal advice.</strong> Aperture
+        is software, not a lawyer, and it is not a substitute for advice from one.
+        Read anything below before you send it, and check that the law you are
+        citing actually applies to you. GDPR rights, including the Article 77
+        complaint, belong to people in the EU and UK; if you are elsewhere, the
+        CCPA letter may be the relevant one, or none of them may be.</p>
       <div>${LETTERS.map(L => `<button class="btn ghost" data-l="${L.id}">${esc(L.label)}</button>`).join('')}</div>
       <div id="letterout"></div>
     </div>`;
